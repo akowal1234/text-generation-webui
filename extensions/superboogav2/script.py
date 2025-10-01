@@ -53,7 +53,7 @@ def _feed_data_into_collector(corpus):
     yield '### Done.'
 
 
-def _feed_file_into_collector(files):
+def _feed_file_into_collector(files, project_name=None):
     if not files:
         logger.warning("No files selected.")
         return
@@ -66,9 +66,22 @@ def _feed_file_into_collector(files):
             logger.error(f"Failed to read {file_path}.")
             return None
 
-    def extract_with_utf8(text):
+    def extract_with_multiple_encodings(text):
+        """Try to decode text with multiple encodings."""
+        encodings = ['utf-8', 'windows-1252', 'latin-1', 'utf-16', 'cp1251', 'iso-8859-2']
+
+        for encoding in encodings:
+            try:
+                decoded = text.decode(encoding)
+                # Check if decoding produced reasonable text
+                if decoded and not all(ord(c) > 127 for c in decoded[:min(100, len(decoded))]):
+                    return decoded
+            except (UnicodeDecodeError, LookupError):
+                continue
+
+        # Last resort: decode with error handling
         try:
-            return text.decode('utf-8')
+            return text.decode('utf-8', errors='ignore')
         except Exception:
             return ""
 
@@ -149,7 +162,7 @@ def _feed_file_into_collector(files):
             continue
 
         text_extractors = [
-            lambda: extract_with_utf8(file_content),
+            lambda: extract_with_multiple_encodings(file_content),
             lambda: extract_with_fitz(file_content),
             lambda: extract_with_docx(file),
             lambda: extract_with_pptx(file),
@@ -166,11 +179,124 @@ def _feed_file_into_collector(files):
             logger.error(f"Failed to extract text from {file_name}, unsupported format.")
             continue
 
-        process_and_add_to_collector(text, collector, False, create_metadata_source(f"file-{index}"))
+        metadata = create_metadata_source(f"file-{index}")
+        if project_name:
+            metadata['project'] = project_name
+
+        process_and_add_to_collector(text, collector, False, metadata)
 
     logger.info("Done.")
     yield "### Done."
 
+def _feed_path_into_collector(path_input, recursive=False, file_extensions=None, use_project_metadata=True):
+    """
+    Process all files from a given directory path.
+
+    Args:
+        path_input: Directory path as string
+        recursive: Whether to search subdirectories
+        file_extensions: List of file extensions to filter (e.g., ['.txt', '.pdf'])
+        use_project_metadata: Whether to add project metadata based on directory structure
+    """
+    if not path_input:
+        logger.warning("No path provided.")
+        yield "### No path provided."
+        return
+
+    path = Path(path_input)
+
+    if not path.exists():
+        logger.error(f"Path does not exist: {path_input}")
+        yield f"### Error: Path does not exist: {path_input}"
+        return
+
+    if not path.is_dir():
+        logger.error(f"Path is not a directory: {path_input}")
+        yield f"### Error: Path is not a directory: {path_input}"
+        return
+
+    # Group files by project (immediate subdirectory)
+    files_by_project = {}
+
+    if recursive:
+        for file_path in path.rglob('*'):
+            if file_path.is_file():
+                if file_extensions is None or any(file_path.suffix.lower() == ext.lower() for ext in file_extensions):
+                    project_name = _extract_project_from_path(file_path, path) if use_project_metadata else None
+                    if project_name not in files_by_project:
+                        files_by_project[project_name] = []
+                    files_by_project[project_name].append(str(file_path))
+    else:
+        for file_path in path.iterdir():
+            if file_path.is_file():
+                if file_extensions is None or any(file_path.suffix.lower() == ext.lower() for ext in file_extensions):
+                    project_name = None
+                    if project_name not in files_by_project:
+                        files_by_project[project_name] = []
+                    files_by_project[project_name].append(str(file_path))
+
+    if not files_by_project:
+        logger.warning(f"No files found in path: {path_input}")
+        yield f"### No files found in path: {path_input}"
+        return
+
+    total_files = sum(len(files) for files in files_by_project.values())
+    logger.info(f"Found {total_files} files to process")
+    yield f"### Found {total_files} files to process..."
+
+    # Process files grouped by project
+    for project_name, project_files in files_by_project.items():
+        if project_name:
+            logger.info(f"Processing {len(project_files)} files for project: {project_name}")
+            yield f"### Processing project: {project_name}..."
+
+        for result in _feed_file_into_collector(project_files, project_name):
+            yield result
+
+
+def _extract_project_from_path(file_path: Path, base_path: Path) -> str:
+    """
+    Extract project name from file path.
+    The project name is the immediate subdirectory under the base path.
+
+    For example:
+    - base_path: /root/src
+    - file_path: /root/src/fleetweb/subdir/file.txt
+    - returns: "fleetweb"
+    """
+    try:
+        relative_path = file_path.relative_to(base_path)
+        parts = relative_path.parts
+
+        # If there's at least one directory in the path, use the first one as project name
+        if len(parts) > 1:
+            return parts[0]
+        else:
+            # File is directly in the base path
+            return None
+    except ValueError:
+        return None
+
+
+def process_path_input(path, recursive, extensions, use_project_metadata=True):
+    """
+    Helper function to process path input with parsed extensions.
+
+    Args:
+        path: Directory path as string
+        recursive: Whether to search subdirectories
+        extensions: Comma-separated string of file extensions to filter
+        use_project_metadata: Whether to add project metadata based on directory structure
+    """
+    ext_list = None
+    if extensions and extensions.strip():
+        ext_list = [ext.strip() for ext in extensions.split(',') if ext.strip()]
+        # Ensure each extension starts with a dot
+        ext_list = ['.' + ext if not ext.startswith('.') else ext for ext in ext_list]
+
+    # Call the feed function with parsed parameters
+    for result in _feed_path_into_collector(path, recursive, ext_list, use_project_metadata):
+        yield result
 
 def _feed_url_into_collector(urls):
     for i in feed_url_into_collector(urls, collector):
@@ -363,6 +489,30 @@ def ui():
                 file_input = gr.File(label="Input file", type="filepath", file_count="multiple")
                 update_files = gr.Button('Load data')
 
+            with gr.Tab("Path input"):
+                path_input = gr.Textbox(
+                    label='Directory path',
+                    info='Enter the full path to a directory containing files to process.',
+                    placeholder='/path/to/your/directory'
+                )
+                with gr.Row():
+                    recursive_search = gr.Checkbox(
+                        value=True,
+                        label='Recursive search',
+                        info='Search subdirectories for files.'
+                    )
+                    use_project_metadata = gr.Checkbox(
+                        value=True,
+                        label='Use project metadata',
+                        info='Add project metadata based on subdirectory names.'
+                    )
+                file_extensions_input = gr.Textbox(
+                    label='File extensions (optional)',
+                    info='Comma-separated list of extensions to filter (e.g., .txt,.pdf,.docx). Leave empty to process all files.',
+                    placeholder='.txt, .pdf, .docx'
+                )
+                update_path = gr.Button('Load data from path')
+
             with gr.Tab("Settings"):
                 with gr.Accordion("Processing settings", open=True):
                     chunk_len = gr.Textbox(value=parameters.get_chunk_len(), label='Chunk length', info='In characters, not tokens. This value is used when you click on "Load data".')
@@ -442,6 +592,7 @@ def ui():
     update_data.click(_feed_data_into_collector, [data_input], last_updated, show_progress=False)
     update_urls.click(_feed_url_into_collector, [url_input], last_updated, show_progress=False)
     update_files.click(_feed_file_into_collector, [file_input], last_updated, show_progress=False)
+    update_path.click(process_path_input, [path_input, recursive_search, file_extensions_input, use_project_metadata], last_updated, show_progress=False)
     benchmark_button.click(_begin_benchmark, [], last_updated, show_progress=True)
     optimize_button.click(_begin_optimization, [], [last_updated] + optimizable_params, show_progress=True)
     clear_button.click(_clear_data, [], last_updated, show_progress=False)

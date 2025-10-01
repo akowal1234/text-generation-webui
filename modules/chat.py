@@ -1396,6 +1396,9 @@ def generate_pfp_cache(character):
 
 
 def load_character(character, name1, name2):
+    if character is None or (not character):
+        character = 'Assistant'
+        
     context = greeting = ""
     greeting_field = 'greeting'
     picture = None

@@ -332,6 +332,172 @@ class ChromaCollector():
 
             return return_documents
 
+    def get_sorted_by_dist_with_filter(self, search_strings: list[str], n_results: int, max_token_count: int, project_filter: str = None) -> list[str]:
+        """
+        Get chunks by similarity with optional project filtering and then sort by distance (lowest distance is last).
+
+        Args:
+            search_strings: List of search strings to query
+            n_results: Maximum number of results to return
+            max_token_count: Maximum token count for returned documents
+            project_filter: Optional project name to filter results
+
+        Returns:
+            List of document strings sorted by distance (best matches last)
+        """
+        with self.lock:
+            n_results = min(len(self.ids), n_results)
+            if n_results == 0:
+                return []
+
+            if isinstance(search_strings, str):
+                search_strings = [search_strings]
+
+            infos = []
+            min_start_index, max_start_index = self._find_min_max_start_index()
+
+            for search_string in search_strings:
+                # Build the where clause for filtering
+                where_clause = None
+                if project_filter:
+                    where_clause = {"project": project_filter}
+
+                # Query with optional filtering
+                result = self.collection.query(
+                    query_texts=search_string,
+                    n_results=math.ceil(n_results / len(search_strings)),
+                    include=['distances', 'metadatas'],
+                    where=where_clause
+                )
+
+                # Process results
+                for id_, distance, metadata in zip(result['ids'][0], result['distances'][0], result['metadatas'][0]):
+                    # Skip if the document doesn't exist in our info dict
+                    if id_ not in self.id_to_info:
+                        continue
+
+                    # Create Info object
+                    info = Info(
+                        start_index=self.id_to_info[id_]['start_index'],
+                        text_with_context=self.id_to_info[id_]['text_with_context'],
+                        distance=distance,
+                        id=id_
+                    )
+                    infos.append(info)
+
+            # If no results found after filtering, return empty list
+            if not infos:
+                return []
+
+            # Apply time weighing and filtering
+            self._apply_sigmoid_time_weighing(
+                infos=infos,
+                document_len=max_start_index - min_start_index + 1,
+                time_steepness=parameters.get_time_steepness(),
+                time_power=parameters.get_time_power()
+            )
+            infos = self._filter_outliers_by_median_distance(infos, parameters.get_significant_level())
+
+            # Sort and merge
+            infos.sort(key=lambda x: x.start_index)
+            infos = self._merge_infos(infos)
+
+            # Extract documents and distances
+            documents = [inf.text_with_context for inf in infos]
+            distances = [inf.distance for inf in infos]
+
+            # Sort by distance (lowest -> highest)
+            sorted_docs = [doc for doc, _ in sorted(zip(documents, distances), key=lambda x: x[1])]
+
+            # Apply token count limit
+            return_documents = self._get_documents_up_to_token_count(sorted_docs, max_token_count)
+            return_documents.reverse()  # highest -> lowest (best matches last)
+
+            return return_documents
+
+    def get_sorted_by_ids_with_filter(self, search_strings: list[str], n_results: int, max_token_count: int, project_filter: str = None) -> list[str]:
+        """
+        Get chunks by similarity with optional project filtering and then sort by ids.
+
+        Args:
+            search_strings: List of search strings to query
+            n_results: Maximum number of results to return
+            max_token_count: Maximum token count for returned documents
+            project_filter: Optional project name to filter results
+
+        Returns:
+            List of document strings sorted by ID
+        """
+        with self.lock:
+            # Build where clause
+            where_clause = None
+            if project_filter:
+                where_clause = {"project": project_filter}
+
+            # Get filtered documents
+            documents, ids, _ = self._get_documents_ids_distances_with_filter(search_strings, n_results, where_clause)
+            sorted_docs = [x for _, x in sorted(zip(ids, documents))]
+
+            return self._get_documents_up_to_token_count(sorted_docs, max_token_count)
+
+    def _get_documents_ids_distances_with_filter(self, search_strings: list[str], n_results: int, where_clause: dict = None):
+        """
+        Internal method to get documents, ids, and distances with optional filtering.
+
+        Args:
+            search_strings: List of search strings to query
+            n_results: Maximum number of results to return
+            where_clause: Optional where clause for filtering
+
+        Returns:
+            Tuple of (documents, ids, distances)
+        """
+        n_results = min(len(self.ids), n_results)
+        if n_results == 0:
+            return [], [], []
+
+        if isinstance(search_strings, str):
+            search_strings = [search_strings]
+
+        infos = []
+        min_start_index, max_start_index = self._find_min_max_start_index()
+
+        for search_string in search_strings:
+            result = self.collection.query(
+                query_texts=search_string,
+                n_results=math.ceil(n_results / len(search_strings)),
+                include=['distances', 'metadatas'],
+                where=where_clause
+            )
+
+            curr_infos = []
+            for id_, distance in zip(result['ids'][0], result['distances'][0]):
+                if id_ in self.id_to_info:
+                    curr_infos.append(Info(
+                        start_index=self.id_to_info[id_]['start_index'],
+                        text_with_context=self.id_to_info[id_]['text_with_context'],
+                        distance=distance,
+                        id=id_
+                    ))
+
+            self._apply_sigmoid_time_weighing(
+                infos=curr_infos,
+                document_len=max_start_index - min_start_index + 1,
+                time_steepness=parameters.get_time_steepness(),
+                time_power=parameters.get_time_power()
+            )
+            curr_infos = self._filter_outliers_by_median_distance(curr_infos, parameters.get_significant_level())
+            infos.extend(curr_infos)
+
+        infos.sort(key=lambda x: x.start_index)
+        infos = self._merge_infos(infos)
+
+        texts_with_context = [inf.text_with_context for inf in infos]
+        ids = [inf.id for inf in infos]
+        distances = [inf.distance for inf in infos]
+
+        return texts_with_context, ids, distances
+
     def delete(self, ids_to_delete: list[str], where: dict):
         with self.lock:
             ids_to_delete = self.collection.get(ids=ids_to_delete, where=where)['ids']

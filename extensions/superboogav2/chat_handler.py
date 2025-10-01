@@ -100,19 +100,42 @@ def _hijack_last(context_text: str, history: dict, max_len: int, state: dict):
 
 
 def custom_generate_chat_prompt_internal(user_input: str, state: dict, collector: ChromaCollector, **kwargs):
+    # Extract project filter from state
+    project_filter = state.get('project', None)
+
     if parameters.get_add_chat_to_data():
         # Get the whole history as one string
         history_as_text = _concatinate_history(kwargs['history'], state)
-
         if history_as_text:
-            # Delete all documents that were auto-inserted
-            collector.delete(ids_to_delete=None, where=CHAT_METADATA)
+            # Build metadata for chat history, including project if specified
+            chat_metadata = dict(CHAT_METADATA)
+            if project_filter:
+                chat_metadata['project'] = project_filter
+
+            # Delete all documents that were auto-inserted for this project (or all if no filter)
+            collector.delete(ids_to_delete=None, where=chat_metadata)
             # Insert the processed history
-            process_and_add_to_collector(history_as_text, collector, False, CHAT_METADATA)
+            process_and_add_to_collector(history_as_text, collector, False, chat_metadata)
 
     if _should_query(user_input):
         user_input = _remove_tag_if_necessary(user_input)
-        results = collector.get_sorted_by_dist(user_input, n_results=parameters.get_chunk_count(), max_token_count=int(parameters.get_max_token_count()))
+
+        # Use project-filtered search if project is specified
+        if project_filter and hasattr(collector, 'get_sorted_by_dist_with_filter'):
+            results = collector.get_sorted_by_dist_with_filter(
+                user_input,
+                n_results=parameters.get_chunk_count(),
+                max_token_count=int(parameters.get_max_token_count()),
+                project_filter=project_filter
+            )
+            if not results:
+                logger.warning(f"No results found for project '{project_filter}'")
+        else:
+            results = collector.get_sorted_by_dist(
+                user_input,
+                n_results=parameters.get_chunk_count(),
+                max_token_count=int(parameters.get_max_token_count())
+            )
 
         # Check if the strategy is to modify the last message. If so, prepend or append to the user query.
         if parameters.get_injection_strategy() == parameters.APPEND_TO_LAST:

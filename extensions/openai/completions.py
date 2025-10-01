@@ -255,6 +255,8 @@ def chat_completions_common(body: dict, is_legacy: bool = False, stream=False, p
         'stream': stream
     })
 
+    generate_params['project'] = body.get('project', '')
+
     max_tokens = generate_params['max_new_tokens']
     if max_tokens in [None, 0]:
         generate_params['max_new_tokens'] = 512

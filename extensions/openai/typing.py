@@ -115,6 +115,7 @@ class CompletionRequestParams(BaseModel):
     temperature: float | None = 1
     top_p: float | None = 1
     user: str | None = Field(default=None, description="Unused parameter.")
+    project: Optional[str] = Field(default="", description="Project filter for context retrieval")
 
     @model_validator(mode='after')
     def validate_prompt_or_messages(self):
@@ -170,6 +171,7 @@ class ChatCompletionRequestParams(BaseModel):
 
     continue_: bool = Field(default=False, description="Makes the last bot message in the history be continued instead of starting a new message.")
 
+    project: Optional[str] = Field(default="", description="Project filter for context retrieval")
 
 class ChatCompletionRequest(GenerationOptions, ChatCompletionRequestParams):
     pass

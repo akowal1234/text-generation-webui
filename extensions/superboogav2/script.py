@@ -508,6 +508,7 @@ def ui():
                     )
                 file_extensions_input = gr.Textbox(
                     label='File extensions (optional)',
+                    value='.java, .py, .txt, .md, .js, .htm, .html, .query',
                     info='Comma-separated list of extensions to filter (e.g., .txt,.pdf,.docx). Leave empty to process all files.',
                     placeholder='.txt, .pdf, .docx'
                 )

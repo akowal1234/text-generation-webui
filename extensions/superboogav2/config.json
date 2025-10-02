@@ -133,7 +133,7 @@
       "default": true
     },
     "add_chat_to_data": {
-      "default": true
+      "default": false
     },
     "injection_strategy": {
       "default": "PREPEND_TO_LAST",

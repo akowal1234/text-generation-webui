@@ -75,14 +75,15 @@ class Info:
 
 class ChromaCollector():
     def __init__(self):
-        name = "".join(random.choice("ab") for _ in range(10))
-
-        self.name = name
+        self.name = "superboogav2"
         self.embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
             "sentence-transformers/all-mpnet-base-v2",
             device=("cuda" if torch.cuda.is_available() else "cpu"),
         )
-        chroma_client = chromadb.Client(Settings(anonymized_telemetry=False))
+        chroma_client = chromadb.PersistentClient(
+            path="./chroma_data",  # Directory to store data
+            settings=Settings(anonymized_telemetry=False)
+        )
         self.collection = chroma_client.create_collection(
             name=self.name,
             embedding_function=self.embedder,
@@ -515,6 +516,13 @@ class ChromaCollector():
 
     def clear(self):
         with self.lock:
+            # Delete the collection before reinitializing
+            try:
+                self.collection.delete(where={})  # Delete all documents
+                logger.info('Deleted all documents from collection.')
+            except Exception as e:
+                logger.warning(f'Could not delete collection documents: {e}')
+
             self.__init__()  # reinitialize the collector
             logger.info('Successfully cleared all records and reset chromaDB.')
 

@@ -84,7 +84,7 @@ class ChromaCollector():
             path="./chroma_data",  # Directory to store data
             settings=Settings(anonymized_telemetry=False)
         )
-        self.collection = chroma_client.create_collection(
+        self.collection = chroma_client.get_or_create_collection(
             name=self.name,
             embedding_function=self.embedder,
             metadata={

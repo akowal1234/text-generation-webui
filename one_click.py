@@ -1,3 +1,10 @@
+import multiprocessing
+try:
+    multiprocessing.set_start_method('spawn', force=True)
+except RuntimeError:
+    # If it's already set, force=True above should have done it, but in case of weirdness just continue.
+    pass
+
 import argparse
 import glob
 import hashlib
@@ -9,14 +16,6 @@ import signal
 import site
 import subprocess
 import sys
-
-# Ensure correct multiprocessing start method before any torch imports
-import multiprocessing
-try:
-    multiprocessing.set_start_method("spawn", force=True)
-except RuntimeError:
-    # Already set, ignore
-    pass
 
 # Remove the '# ' from the following lines as needed for your AMD GPU on Linux
 # os.environ["ROCM_PATH"] = '/opt/rocm'

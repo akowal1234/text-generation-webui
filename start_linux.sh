@@ -74,5 +74,4 @@ source "$CONDA_ROOT_PREFIX/etc/profile.d/conda.sh" # otherwise conda complains a
 conda activate "$INSTALL_ENV_DIR"
 
 # setup installer env
-"$INSTALL_ENV_DIR/bin/python" -c "import multiprocessing; multiprocessing.set_start_method('spawn', force=True)"
 python one_click.py $@

@@ -1,10 +1,3 @@
-import multiprocessing
-try:
-    multiprocessing.set_start_method('spawn', force=True)
-except RuntimeError:
-    # If it's already set, force=True above should have done it, but in case of weirdness just continue.
-    pass
-
 import argparse
 import glob
 import hashlib
